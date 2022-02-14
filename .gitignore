@@ -1,0 +1,7 @@
+/target
+/data
+/cookie*
+/output.log
+/secret.key
+/Rocket.toml
+/.vscode
