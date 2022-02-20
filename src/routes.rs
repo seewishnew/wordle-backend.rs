@@ -1,6 +1,6 @@
 use std::collections::{HashSet, HashMap};
 
-use crate::mongo_utils::{ID, NOT_EQUAL, PUSH};
+use crate::mongo_utils::{ID, NOT_EQUAL, PUSH, NOT_IN};
 use crate::{
     game::GameIdParam,
     user::{User, UserConn},
@@ -175,7 +175,7 @@ pub async fn register(
                 match game_conn
                     .0
                     .update_one(
-                        doc! {ID: game_id.0, CREATOR_FIELDNAME: doc!{NOT_EQUAL: user_id}},
+                        doc! {ID: game_id.0, CREATOR_FIELDNAME: doc!{NOT_EQUAL: user_id}, PLAYERS_ID_FIELDNAME: doc!{NOT_EQUAL: player.id}},
                         doc! {PUSH: doc!{PLAYERS_FIELDNAME: &player}},
                         None,
                     )
@@ -184,7 +184,7 @@ pub async fn register(
                     Ok(res) => {
                         if res.matched_count != 1 {
                             error!("Error: game_id {game_id:?} not found!");
-                            Err(Status::NotFound)
+                            Err(Status::BadRequest)
                         } else if res.modified_count != 1 {
                             error!("Could not update game_id {game_id:?}");
                             Err(Status::InternalServerError)
