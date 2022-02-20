@@ -1,5 +1,3 @@
-use std::collections::{HashMap, HashSet};
-
 use rocket::{serde::{Serialize, Deserialize,}, request::FromParam, http::Status};
 use mongodb::{bson::{oid::ObjectId, Bson, self}, Collection};
 
@@ -9,7 +7,6 @@ pub const PLAYERS_FIELDNAME: &'static str = "players";
 pub const PLAYERS_GUESSES_FIELDNAME: &'static str = "players.$.guesses";
 pub const PLAYERS_ID_FIELDNAME: &'static str = "players._id";
 pub const CREATOR_FIELDNAME: &'static str = "creator";
-pub const ANSWER_FIELDNAME: &'static str = "answer";
 
 #[derive(Deserialize)]
 pub struct CreateGameRequest<'r> {

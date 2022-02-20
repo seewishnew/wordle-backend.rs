@@ -1,6 +1,6 @@
 use std::collections::{HashSet, HashMap};
 
-use crate::mongo_utils::{ID, NOT_EQUAL, PUSH, NOT_IN};
+use crate::mongo_utils::{ID, NOT_EQUAL, PUSH};
 use crate::{
     game::GameIdParam,
     user::{User, UserConn},
@@ -294,11 +294,6 @@ pub async fn play(
                         }
                     }
             },
-            
-            Err(error) => {
-                error!("Error occurred while accessing game id {game_id:?}: {error:?}");
-                Err(Status::InternalServerError)
-            },
             Ok(None) => {
                 error!("game_id: {game_id:?} not found with registered user_id: {user_id}");
                 Err(Status::BadRequest)
@@ -306,7 +301,7 @@ pub async fn play(
             Err(error) => {
                 error!("Error occurred while accessing game id {game_id:?}: {error:?}");
                 Err(Status::InternalServerError)
-            }
+            },
         }
     })
 }
