@@ -54,6 +54,6 @@ async fn rocket() -> _ {
         .manage(UserConn(client.database(DB).collection(USERS_COLLECTION)))
         .mount(
             "/",
-            routes![index, create_game, manage_game, register, user_id, play],
+            routes![index, create_game, manage_game, register, user_id, play, get_state],
         )
 }

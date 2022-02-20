@@ -69,7 +69,7 @@ impl From<&Guess> for Bson {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 pub enum Correctness {
     Correct,
     IncorrectPosition,
@@ -114,4 +114,10 @@ pub struct PlayRequest {
 pub struct PlayResponse {
     pub game_over: bool,
     pub guess: Vec<(char, Correctness)>
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GetStateResponse {
+    pub game_over: bool,
+    pub guesses: Vec<Vec<(char, Correctness)>>,
 }

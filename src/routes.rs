@@ -8,7 +8,7 @@ use crate::{
 
 use crate::game::{
     CreateGameRequest, CreateGameResponse, Game, GameConn, Guess, ManageGameResponse, PlayRequest,
-    Player, CREATOR_FIELDNAME, PLAYERS_FIELDNAME, PLAYERS_GUESSES_FIELDNAME, PLAYERS_ID_FIELDNAME, Correctness, PlayResponse, PlayerResponse,
+    Player, CREATOR_FIELDNAME, PLAYERS_FIELDNAME, PLAYERS_GUESSES_FIELDNAME, PLAYERS_ID_FIELDNAME, Correctness, PlayResponse, PlayerResponse, GetStateResponse,
 };
 use crate::user::{CreateUserIdRequest, COOKIE_USER_ID, COOKIE_USER_NAME};
 use mongodb::{
@@ -250,6 +250,36 @@ fn eval(ans_imap: HashMap<char, HashSet<usize>>, guess: Vec<char>) -> PlayRespon
                 guess,
             }
         }
+}
+
+#[get("/game/<game_id>/state")]
+pub async fn get_state(
+    cookies: &CookieJar<'_>,
+    game_conn: &State<GameConn>,
+    game_id: GameIdParam,
+) -> Result<Json<GetStateResponse>, Status> {
+    parse_user_id!(cookies, user_id, {
+        match game_conn.0.find_one(doc!{ID: game_id.0, PLAYERS_ID_FIELDNAME: user_id}, None).await {
+            Ok(Some(game)) => {
+                let player = game.players.iter().find_map(|player| if player.id == user_id { Some (player.clone()) } else { None }).unwrap();
+                let guesses: Vec<Vec<(char, Correctness)>> = player.guesses.iter().map(|guess| guess.guess.clone()).collect();
+                let game_over = guesses.len() == 6 || guesses.iter().last().map(|guess| guess.iter().all(|&(_, correctness)| correctness == Correctness::Correct)).unwrap_or(false);
+                let resp = GetStateResponse {
+                    game_over,
+                    guesses,
+                };
+                Ok(Json::from(resp))
+            },
+            Ok(None) => {
+                error!("Could not find game_id {game_id:?} with user_id {user_id}");
+                Err(Status::BadRequest)
+            },
+            Err(error) => {
+                error!("Error occurred when trying to get game_id {game_id:?} for user_id {user_id}: {error:?}");
+                Err(Status::InternalServerError)
+            }
+        }
+    })
 }
 
 #[post("/game/<game_id>/play", data = "<guess>")]
