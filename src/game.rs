@@ -1,5 +1,12 @@
-use rocket::{serde::{Serialize, Deserialize,}, request::FromParam, http::Status};
-use mongodb::{bson::{oid::ObjectId, Bson, self}, Collection};
+use mongodb::{
+    bson::{self, oid::ObjectId, Bson},
+    Collection,
+};
+use rocket::{
+    http::Status,
+    request::FromParam,
+    serde::{Deserialize, Serialize},
+};
 
 pub const DB: &'static str = "wordle";
 pub const GAMES_COLLECTION: &'static str = "games";
@@ -107,13 +114,13 @@ impl FromParam<'_> for GameIdParam {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PlayRequest {
-    pub guess: Vec<char>
+    pub guess: Vec<char>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PlayResponse {
     pub game_over: bool,
-    pub guess: Vec<(char, Correctness)>
+    pub guess: Vec<(char, Correctness)>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

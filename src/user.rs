@@ -1,6 +1,9 @@
-
 use mongodb::{bson::oid::ObjectId, Collection};
-use rocket::{serde::{Serialize, Deserialize,}, request::FromParam, http::Status};
+use rocket::{
+    http::Status,
+    request::FromParam,
+    serde::{Deserialize, Serialize},
+};
 
 pub const USERS_COLLECTION: &'static str = "users";
 
@@ -35,5 +38,5 @@ impl FromParam<'_> for UserIdParam {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CreateUserIdRequest {
-    pub name: String
+    pub name: String,
 }

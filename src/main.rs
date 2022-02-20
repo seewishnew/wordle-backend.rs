@@ -1,4 +1,4 @@
-use log::{info};
+use log::info;
 #[macro_use]
 extern crate rocket;
 
@@ -7,11 +7,14 @@ use mongodb::{
     Client,
 };
 
-use crate::{game::{DB, GameConn, GAMES_COLLECTION}, user::{UserConn, USERS_COLLECTION}};
+use crate::{
+    game::{GameConn, DB, GAMES_COLLECTION},
+    user::{UserConn, USERS_COLLECTION},
+};
 mod game;
 mod mongo_utils;
-mod user;
 mod routes;
+mod user;
 
 use crate::routes::*;
 
@@ -54,6 +57,14 @@ async fn rocket() -> _ {
         .manage(UserConn(client.database(DB).collection(USERS_COLLECTION)))
         .mount(
             "/",
-            routes![index, create_game, manage_game, register, user_id, play, get_state],
+            routes![
+                index,
+                create_game,
+                manage_game,
+                register,
+                user_id,
+                play,
+                get_state
+            ],
         )
 }
