@@ -1,3 +1,5 @@
+use std::collections::{HashSet, HashMap};
+
 use crate::mongo_utils::{ID, NOT_EQUAL, PUSH};
 use crate::{
     game::GameIdParam,
@@ -6,9 +8,9 @@ use crate::{
 
 use crate::game::{
     CreateGameRequest, CreateGameResponse, Game, GameConn, Guess, ManageGameResponse, PlayRequest,
-    Player, CREATOR_FIELDNAME, PLAYERS_FIELDNAME, PLAYERS_GUESSES_FIELDNAME, PLAYERS_ID_FIELDNAME,
+    Player, CREATOR_FIELDNAME, PLAYERS_FIELDNAME, PLAYERS_GUESSES_FIELDNAME, PLAYERS_ID_FIELDNAME, Correctness, PlayResponse, PlayerResponse,
 };
-use crate::user::{CreateUserIdRequest, COOKIE_USER_ID};
+use crate::user::{CreateUserIdRequest, COOKIE_USER_ID, COOKIE_USER_NAME};
 use mongodb::{
     bson::{doc, oid::ObjectId},
     results::InsertOneResult,
@@ -58,7 +60,7 @@ pub async fn create_game(
         match conn.0.insert_one(&game, None).await {
             Ok(InsertOneResult { inserted_id, .. }) => {
                 info!("Created game {inserted_id:?}");
-                Ok(Json::from(CreateGameResponse { game_id: game.id }))
+                Ok(Json::from(CreateGameResponse { game_id: game.id.to_hex() }))
             }
             Err(error) => {
                 error!("Error occured during insert: {error:?}");
@@ -85,7 +87,7 @@ pub async fn manage_game(
                 {
                     Ok(Some(game)) => Ok(Json::from(ManageGameResponse {
                         start_time: game.start_time,
-                        players: game.players,
+                        players: game.players.iter().map(|player| PlayerResponse::from(player)).collect(),
                         answer: game.answer,
                     })),
                     Ok(None) => {
@@ -117,26 +119,39 @@ pub async fn user_id(
     req: Json<CreateUserIdRequest>,
 ) -> Result<Status, Status> {
     let Json(CreateUserIdRequest { name }) = req;
-    let user = User {
-        id: ObjectId::new(),
-        name,
-    };
+    let name_cookie = cookies.get(COOKIE_USER_NAME);
+    if name_cookie.is_none() || name_cookie.unwrap().value() != name {
+        let user = User {
+            id: ObjectId::new(),
+            name,
+        };
 
-    match user_conn.0.insert_one(&user, None).await {
-        Ok(_) => {
-            cookies.add_private(
-                Cookie::build(COOKIE_USER_ID, user.id.to_string())
-                    .http_only(true)
+        match user_conn.0.insert_one(&user, None).await {
+            Ok(_) => {
+                cookies.add_private(
+                    Cookie::build(COOKIE_USER_ID, user.id.to_string())
+                        .http_only(true)
+                        .permanent()
+                        .same_site(SameSite::Lax)
+                        .finish(),
+                );
+                cookies.add(
+                    Cookie::build(COOKIE_USER_NAME, user.name)
+                    .http_only(false)
                     .permanent()
                     .same_site(SameSite::Lax)
                     .finish(),
-            );
-            Ok(Status::Ok)
+                );
+                Ok(Status::Ok)
+            }
+            Err(error) => {
+                error!("Could not create new user: {user:?}: {error:?}");
+                Err(Status::InternalServerError)
+            }
         }
-        Err(error) => {
-            error!("Could not create new user: {user:?}: {error:?}");
-            Err(Status::InternalServerError)
-        }
+    } else {
+        log::info!("Received user_id request with an existing user name cookie: {name_cookie:?}");
+        Ok(Status::Ok)
     }
 }
 
@@ -167,12 +182,14 @@ pub async fn register(
                     .await
                 {
                     Ok(res) => {
-                        if res.modified_count == 1 {
-                            Ok(Status::Ok)
-                        } else if res.matched_count == 0 {
-                            Err(Status::BadRequest)
-                        } else {
+                        if res.matched_count != 1 {
+                            error!("Error: game_id {game_id:?} not found!");
+                            Err(Status::NotFound)
+                        } else if res.modified_count != 1 {
+                            error!("Could not update game_id {game_id:?}");
                             Err(Status::InternalServerError)
+                        } else {
+                            Ok(Status::Ok)
                         }
                     }
                     Err(error) => {
@@ -193,40 +210,98 @@ pub async fn register(
     })
 }
 
+fn generate_imap(answer: &str) -> HashMap<char, HashSet<usize>> {
+    let mut ans_imap = HashMap::new();
+    answer.chars().enumerate().for_each(|(i, ch)| {
+        ans_imap.entry(ch).or_insert(HashSet::new()).insert(i);
+    });
+    ans_imap
+}
+
+fn eval(ans_imap: HashMap<char, HashSet<usize>>, guess: Vec<char>) -> PlayResponse {
+        let mut guess_imap = HashMap::new();
+        guess.iter()
+            .enumerate()
+            .for_each(|(i, &ch)| { guess_imap.entry(ch).or_insert(HashSet::new()).insert(i); });
+        log::info!("guess_imap: {:?}", guess_imap);
+        log::info!("ans_imap: {:?}", ans_imap);
+        if ans_imap == guess_imap {
+            PlayResponse {
+                game_over: true,
+                guess: guess.iter()
+                .map(|&ch| {
+                    (ch, Correctness::Correct)
+                }).collect(),
+            }
+        } else {
+            let mut guess: Vec<(char, Correctness)> = guess.into_iter().map(|ch| (ch, Correctness::Incorrect)).collect();
+            guess_imap.iter().for_each(|(&guess_ch, guess_pos)| {
+                if let Some(ans_pos) = ans_imap.get(&guess_ch) {
+                    guess_pos.difference(ans_pos).for_each(|&i| {
+                        guess[i] = (guess_ch, Correctness::IncorrectPosition)
+                    });
+                    guess_pos.intersection(ans_pos).for_each(|&i| {
+                        guess[i] = (guess_ch, Correctness::Correct);
+                    });
+                }
+            });
+            PlayResponse {
+                game_over: false,
+                guess,
+            }
+        }
+}
+
 #[post("/game/<game_id>/play", data = "<guess>")]
 pub async fn play(
     cookies: &CookieJar<'_>,
     game_conn: &State<GameConn>,
     game_id: GameIdParam,
     guess: Json<PlayRequest>,
-) -> Result<Status, Status> {
+) -> Result<Json<PlayResponse>, Status> {
     let Json(PlayRequest { guess }) = guess;
     info!("guess: {guess:?}");
-    let guess = Guess {
-        guess,
-        submit_time: chrono::Utc::now().timestamp_millis() as u64,
-    };
 
     parse_user_id!(cookies, user_id, {
-        match game_conn
-            .0
-            .update_one(
-                doc! {ID: game_id.0, PLAYERS_ID_FIELDNAME: user_id},
-                doc! {PUSH: {PLAYERS_GUESSES_FIELDNAME: &guess}},
-                None,
-            )
-            .await
-        {
-            Ok(update_res) => {
-                if update_res.modified_count == 1 {
-                    Ok(Status::Ok)
-                } else if update_res.matched_count == 0 {
-                    Err(Status::BadRequest)
-                } else if update_res.matched_count == 1 {
-                    Err(Status::Conflict)
-                } else {
-                    Err(Status::InternalServerError)
-                }
+        match game_conn.0.find_one(doc!{ID: game_id.0, PLAYERS_ID_FIELDNAME: user_id}, None).await {
+            Ok(Some(game)) => {
+                let resp = eval(generate_imap(&game.answer), guess);
+                let guess = Guess {
+                    guess: resp.guess.clone(),
+                    submit_time: chrono::Utc::now().timestamp_millis() as u64,
+                };
+                match game_conn
+                        .0
+                        .update_one(
+                            doc! {ID: game_id.0, PLAYERS_ID_FIELDNAME: user_id},
+                            doc! {PUSH: {PLAYERS_GUESSES_FIELDNAME: &guess}},
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(update_res) => {
+                            if update_res.modified_count == 1 {
+                                Ok(Json::from(resp))
+                            } else if update_res.matched_count == 1 {
+                                Err(Status::Conflict)
+                            } else {
+                                Err(Status::InternalServerError)
+                            }
+                        },
+                        Err(error) => {
+                            error!("Error occurred: {error:?}");
+                            Err(Status::InternalServerError)
+                        }
+                    }
+            },
+            
+            Err(error) => {
+                error!("Error occurred while accessing game id {game_id:?}: {error:?}");
+                Err(Status::InternalServerError)
+            },
+            Ok(None) => {
+                error!("game_id: {game_id:?} not found with registered user_id: {user_id}");
+                Err(Status::BadRequest)
             }
             Err(error) => {
                 error!("Error occurred while accessing game id {game_id:?}: {error:?}");

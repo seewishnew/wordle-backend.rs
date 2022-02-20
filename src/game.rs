@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use rocket::{serde::{Serialize, Deserialize,}, request::FromParam, http::Status};
 use mongodb::{bson::{oid::ObjectId, Bson, self}, Collection};
 
@@ -7,6 +9,7 @@ pub const PLAYERS_FIELDNAME: &'static str = "players";
 pub const PLAYERS_GUESSES_FIELDNAME: &'static str = "players.$.guesses";
 pub const PLAYERS_ID_FIELDNAME: &'static str = "players._id";
 pub const CREATOR_FIELDNAME: &'static str = "creator";
+pub const ANSWER_FIELDNAME: &'static str = "answer";
 
 #[derive(Deserialize)]
 pub struct CreateGameRequest<'r> {
@@ -25,7 +28,6 @@ pub struct Game {
     pub answer: String,
 }
 
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Player {
     #[serde(rename = "_id")]
@@ -38,6 +40,23 @@ pub struct Player {
 impl From<&Player> for Bson {
     fn from(player: &Player) -> Self {
         bson::to_bson(player).unwrap()
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PlayerResponse {
+    pub name: String,
+    pub start_time: u64,
+    pub guesses: Vec<Guess>,
+}
+
+impl From<&Player> for PlayerResponse {
+    fn from(player: &Player) -> PlayerResponse {
+        Self {
+            name: player.name.clone(),
+            start_time: player.start_time,
+            guesses: player.guesses.clone(),
+        }
     }
 }
 
@@ -62,13 +81,13 @@ pub enum Correctness {
 
 #[derive(Serialize, Deserialize)]
 pub struct CreateGameResponse {
-    pub game_id: ObjectId,
+    pub game_id: String,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct ManageGameResponse {
     pub start_time: u64,
-    pub players: Vec<Player>,
+    pub players: Vec<PlayerResponse>,
     pub answer: String,
 }
 
@@ -91,5 +110,11 @@ impl FromParam<'_> for GameIdParam {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PlayRequest {
+    pub guess: Vec<char>
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PlayResponse {
+    pub game_over: bool,
     pub guess: Vec<(char, Correctness)>
 }

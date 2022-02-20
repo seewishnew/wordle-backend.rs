@@ -14,6 +14,7 @@ pub struct User {
 pub struct UserConn(pub Collection<User>);
 
 pub const COOKIE_USER_ID: &'static str = "user_id";
+pub const COOKIE_USER_NAME: &'static str = "name";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UserIdParam(pub ObjectId);
