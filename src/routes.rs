@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use crate::mongo_utils::{ID, NOT_EQUAL, PUSH};
 use crate::{
@@ -217,44 +217,40 @@ pub async fn register(
     })
 }
 
-fn generate_imap(answer: &str) -> HashMap<char, HashSet<usize>> {
-    let mut ans_imap = HashMap::new();
-    answer.chars().enumerate().for_each(|(i, ch)| {
-        ans_imap.entry(ch).or_insert(HashSet::new()).insert(i);
-    });
-    ans_imap
-}
-
-fn eval(ans_imap: HashMap<char, HashSet<usize>>, guess: Vec<char>) -> PlayResponse {
-    let mut guess_imap = HashMap::new();
-    guess.iter().enumerate().for_each(|(i, &ch)| {
-        guess_imap.entry(ch).or_insert(HashSet::new()).insert(i);
-    });
-    log::info!("guess_imap: {:?}", guess_imap);
-    log::info!("ans_imap: {:?}", ans_imap);
-    if ans_imap == guess_imap {
+fn eval(answer: Vec<char>, guess: Vec<char>) -> PlayResponse {
+    if answer == guess {
         PlayResponse {
             game_over: true,
             guess: guess.iter().map(|&ch| (ch, Correctness::Correct)).collect(),
         }
     } else {
-        let mut guess: Vec<(char, Correctness)> = guess
+        let mut unused: HashSet<char> = HashSet::new();
+        let mut guess_eval: Vec<(char, Correctness)> = guess
             .into_iter()
-            .map(|ch| (ch, Correctness::Incorrect))
+            .zip(answer.iter())
+            .map(|(gch, &ach)| {
+                (
+                    gch,
+                    if ach == gch {
+                        Correctness::Correct
+                    } else {
+                        unused.insert(ach);
+                        Correctness::Incorrect
+                    },
+                )
+            })
             .collect();
-        guess_imap.iter().for_each(|(&guess_ch, guess_pos)| {
-            if let Some(ans_pos) = ans_imap.get(&guess_ch) {
-                guess_pos
-                    .difference(ans_pos)
-                    .for_each(|&i| guess[i] = (guess_ch, Correctness::IncorrectPosition));
-                guess_pos.intersection(ans_pos).for_each(|&i| {
-                    guess[i] = (guess_ch, Correctness::Correct);
-                });
-            }
-        });
+        guess_eval
+            .iter_mut()
+            .filter(|ge| ge.1 == Correctness::Incorrect)
+            .for_each(|ge| {
+                if unused.remove(&ge.0) {
+                    ge.1 = Correctness::IncorrectPosition;
+                }
+            });
         PlayResponse {
             game_over: false,
-            guess,
+            guess: guess_eval,
         }
     }
 }
@@ -330,7 +326,7 @@ pub async fn play(
             .await
         {
             Ok(Some(game)) => {
-                let resp = eval(generate_imap(&game.answer), guess);
+                let resp = eval(game.answer.chars().collect(), guess);
                 let guess = Guess {
                     guess: resp.guess.clone(),
                     submit_time: chrono::Utc::now().timestamp_millis() as u64,
