@@ -1,11 +1,14 @@
 use log::info;
 #[macro_use]
 extern crate rocket;
-
 use mongodb::{
     options::{ClientOptions, ResolverConfig},
     Client,
 };
+use rocket::Config;
+use std::fs::File;
+use std::io::{self, BufRead};
+use std::path::Path;
 
 use crate::{
     game::{GameConn, DB, GAMES_COLLECTION},
@@ -17,6 +20,9 @@ mod routes;
 mod user;
 
 use crate::routes::*;
+
+const MONGO_URI: &'static str = "MONGO_URI";
+const SECRET_KEY: &'static str = "SECRET_KEY";
 
 fn setup_logger() -> Result<(), fern::InitError> {
     fern::Dispatch::new()
@@ -39,7 +45,12 @@ fn setup_logger() -> Result<(), fern::InitError> {
 #[launch]
 async fn rocket() -> _ {
     setup_logger().unwrap();
-    let client_uri = "mongodb://localhost:27017";
+    let client_uri = format!(
+        "mongodb://{}",
+        std::env::var(MONGO_URI).unwrap_or("localhost:27017".to_owned())
+    );
+    let secret_key = std::env::var(SECRET_KEY).unwrap();
+
     let options =
         ClientOptions::parse_with_resolver_config(client_uri, ResolverConfig::cloudflare())
             .await
@@ -53,6 +64,7 @@ async fn rocket() -> _ {
     }
 
     rocket::build()
+        .configure(Config::figment().merge(("secret_key", secret_key)))
         .manage(GameConn(client.database(DB).collection(GAMES_COLLECTION)))
         .manage(UserConn(client.database(DB).collection(USERS_COLLECTION)))
         .mount(
