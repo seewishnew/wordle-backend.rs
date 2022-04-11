@@ -1,5 +1,6 @@
 TAG ?= latest
 REGISTRY ?= localhost:5000
+BASE_IMAGE ?= rust:1.60
 export sk := $(shell cat secret.key)
 
 deploy-mongo:
@@ -9,6 +10,6 @@ serve:
 	$(shell SECRET_KEY=$(sk) cargo run > output.log)
 
 docker-image:
-	docker build -t wordle-backend:$(TAG) .                         
+	docker build -t wordle-backend:$(TAG) --build-arg=IMAGE=$(BASE_IMAGE) .                         
 	docker tag wordle-backend:$(TAG) $(REGISTRY)/wordle-backend:$(TAG)
 	docker push $(REGISTRY)/wordle-backend:$(TAG)
