@@ -1,7 +1,8 @@
 /target
 /data
-/cookie*
+/*cookie*
 /output.log
 /secret.key
 /Rocket.toml
 /.vscode
+
