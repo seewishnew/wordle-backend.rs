@@ -40,3 +40,6 @@ get-state:
 
 frontend:
 	hyperfine -w 3 -r $(N) --export-json frontend.json 'curl -X GET $(URL)' 'curl -b wordle.cookie -X GET $(URL)'
+
+average: all
+	jq -s '[.[].results[].mean] | add / length' {user_id,create,manage_game,register,play,get_state,frontend}.json
