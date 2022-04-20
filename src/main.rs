@@ -6,9 +6,6 @@ use mongodb::{
     Client,
 };
 use rocket::Config;
-use std::fs::File;
-use std::io::{self, BufRead};
-use std::path::Path;
 
 use crate::{
     game::{GameConn, DB, GAMES_COLLECTION},
@@ -64,7 +61,11 @@ async fn rocket() -> _ {
     }
 
     rocket::build()
-        .configure(Config::figment().merge(("secret_key", secret_key)))
+        .configure(
+            Config::figment()
+                .merge(("secret_key", secret_key))
+                .merge(("cli_colors", false)),
+        )
         .manage(GameConn(client.database(DB).collection(GAMES_COLLECTION)))
         .manage(UserConn(client.database(DB).collection(USERS_COLLECTION)))
         .mount(
@@ -75,6 +76,7 @@ async fn rocket() -> _ {
                 manage_game,
                 register,
                 user_id,
+                verify_user_id,
                 play,
                 get_state
             ],

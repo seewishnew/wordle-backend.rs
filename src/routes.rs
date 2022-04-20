@@ -1,4 +1,6 @@
 use std::collections::HashSet;
+use std::future::Future;
+use std::pin::Pin;
 
 use crate::mongo_utils::{ID, NOT_EQUAL, PUSH};
 use crate::{
@@ -11,7 +13,7 @@ use crate::game::{
     ManageGameResponse, PlayRequest, PlayResponse, Player, PlayerResponse, CREATOR_FIELDNAME,
     PLAYERS_FIELDNAME, PLAYERS_GUESSES_FIELDNAME, PLAYERS_ID_FIELDNAME,
 };
-use crate::user::{CreateUserIdRequest, COOKIE_USER_ID, COOKIE_USER_NAME};
+use crate::user::{CreateUserIdRequest, COOKIE_USER_ID};
 use mongodb::{
     bson::{doc, oid::ObjectId},
     results::InsertOneResult,
@@ -126,39 +128,70 @@ pub async fn user_id(
     req: Json<CreateUserIdRequest>,
 ) -> Result<Status, Status> {
     let Json(CreateUserIdRequest { name }) = req;
-    let name_cookie = cookies.get(COOKIE_USER_NAME);
-    if name_cookie.is_none() || name_cookie.unwrap().value() != name {
-        let user = User {
-            id: ObjectId::new(),
-            name,
-        };
+    let user_id = cookies
+        .get_private(COOKIE_USER_ID)
+        .map_or(String::new(), |crumb| crumb.value().to_owned());
+    let user_id = ObjectId::parse_str(user_id).unwrap_or(ObjectId::new());
+    match user_conn
+        .0
+        .find_one(doc! {ID: user_id}, None)
+        .await
+        .map_err(|error| {
+            error!("Could not find user: {error:?}");
+            Status::InternalServerError
+        })? {
+        None => {
+            let user = User {
+                id: ObjectId::new(),
+                name,
+            };
 
-        match user_conn.0.insert_one(&user, None).await {
-            Ok(_) => {
-                cookies.add_private(
-                    Cookie::build(COOKIE_USER_ID, user.id.to_string())
-                        .http_only(true)
-                        .permanent()
-                        .same_site(SameSite::Lax)
-                        .finish(),
-                );
-                cookies.add(
-                    Cookie::build(COOKIE_USER_NAME, user.name)
-                        .http_only(false)
-                        .permanent()
-                        .same_site(SameSite::Lax)
-                        .finish(),
-                );
-                Ok(Status::Ok)
-            }
-            Err(error) => {
+            user_conn.0.insert_one(&user, None).await.map_err(|error| {
                 error!("Could not create new user: {user:?}: {error:?}");
-                Err(Status::InternalServerError)
-            }
+                Status::InternalServerError
+            })?;
+            cookies.add_private(
+                Cookie::build(COOKIE_USER_ID, user.id.to_string())
+                    .http_only(true)
+                    .permanent()
+                    .same_site(SameSite::Lax)
+                    .finish(),
+            );
+            Ok(Status::Ok)
         }
-    } else {
-        log::info!("Received user_id request with an existing user name cookie: {name_cookie:?}");
-        Ok(Status::Ok)
+        Some(user) => {
+            info!("Received user_id request with an existing user: {user:?}");
+            Ok(Status::Ok)
+        }
+    }
+}
+
+#[get("/user_id/verify")]
+pub async fn verify_user_id(
+    cookies: &CookieJar<'_>,
+    user_conn: &State<UserConn>,
+) -> Result<Status, Status> {
+    let user_id = cookies
+        .get_private(COOKIE_USER_ID)
+        .map_or(String::new(), |crumb| crumb.value().to_owned());
+    let user_id = ObjectId::parse_str(user_id).map_err(|_| Status::Unauthorized)?;
+    info!("Got user_id: {user_id:?}");
+    match user_conn
+        .0
+        .find_one(doc! {ID: user_id }, None)
+        .await
+        .map_err(|error| {
+            error!("Could not find user: {error:?}");
+            Status::InternalServerError
+        })? {
+        None => {
+            error!("Unauthorized!");
+            Err(Status::Unauthorized)
+        }
+        Some(user) => {
+            info!("Received user_id request with an existing user: {user:?}");
+            Ok(Status::Ok)
+        }
     }
 }
 
@@ -170,49 +203,47 @@ pub async fn register(
     game_id: GameIdParam,
 ) -> Result<Status, Status> {
     parse_user_id!(cookies, user_id, {
-        match user_conn.0.find_one(doc! {ID: user_id}, None).await {
-            Ok(Some(user)) => {
-                let player = Player {
-                    id: user.id,
-                    name: user.name,
-                    guesses: Vec::new(),
-                    start_time: chrono::Utc::now().timestamp_millis() as u64,
-                };
-
-                match game_conn
-                    .0
-                    .update_one(
-                        doc! {ID: game_id.0, CREATOR_FIELDNAME: doc!{NOT_EQUAL: user_id}, PLAYERS_ID_FIELDNAME: doc!{NOT_EQUAL: player.id}},
-                        doc! {PUSH: doc!{PLAYERS_FIELDNAME: &player}},
-                        None,
-                    )
-                    .await
-                {
-                    Ok(res) => {
-                        if res.matched_count != 1 {
-                            error!("Error: game_id {game_id:?} not found!");
-                            Err(Status::BadRequest)
-                        } else if res.modified_count != 1 {
-                            error!("Could not update game_id {game_id:?}");
-                            Err(Status::InternalServerError)
-                        } else {
-                            Ok(Status::Ok)
-                        }
-                    }
-                    Err(error) => {
-                        error!("Error while updating game id: {game_id:?} with new player information: {player:?}: {error:?}");
-                        Err(Status::InternalServerError)
-                    }
-                }
-            }
-            Ok(None) => {
-                error!("No user found matching player id: {user_id:?}");
-                Err(Status::Unauthorized)
-            }
-            Err(error) => {
+        let user = user_conn
+            .0
+            .find_one(doc! {ID: user_id}, None)
+            .await
+            .map_err(|error| {
                 error!("Error while finding user for player id: {user_id:?}: {error:?}");
+                Status::InternalServerError
+            })?;
+        if let Some(user) = user {
+            let player = Player {
+                id: user.id,
+                name: user.name,
+                guesses: Vec::new(),
+                start_time: chrono::Utc::now().timestamp_millis() as u64,
+            };
+
+            let res = game_conn
+                        .0
+                        .update_one(
+                            doc! {ID: game_id.0, CREATOR_FIELDNAME: doc!{NOT_EQUAL: user_id}, PLAYERS_ID_FIELDNAME: doc!{NOT_EQUAL: player.id}},
+                            doc! {PUSH: doc!{PLAYERS_FIELDNAME: &player}},
+                            None,
+                        )
+                        .await
+                        .map_err(|error| {
+                            error!("Error while updating game id: {game_id:?} with new player information: {player:?}: {error:?}");
+                            Status::InternalServerError
+                        })?;
+
+            if res.matched_count != 1 {
+                error!("Error: game_id {game_id:?} not found!");
+                Err(Status::BadRequest)
+            } else if res.modified_count != 1 {
+                error!("Could not update game_id {game_id:?}");
                 Err(Status::InternalServerError)
+            } else {
+                Ok(Status::Ok)
             }
+        } else {
+            error!("No user found matching player id: {user_id:?}");
+            Err(Status::Unauthorized)
         }
     })
 }
