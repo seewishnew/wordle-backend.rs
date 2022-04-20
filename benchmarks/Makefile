@@ -5,6 +5,11 @@ all: user-id create-game manage-game register play get-state frontend
 user-id:
 	hyperfine -w 3 -r $(N) --export-json user_id.json 'curl -c wordle.cookie -X POST -d '"'"'{"name": "seewishnew"}'"'"' $(URL)/api/v1/user_id'
 
+verify-user-id:
+	curl -c wordle.cookie -X POST -d '{"name": "seewishnew"}' $(URL)/api/v1/user_id
+	hyperfine --show-output -w 3 -r $(N) --export-json verify_user_id.json \
+		'curl $(URL)/api/v1/user_id/verify' 'curl -vv -b wordle.cookie $(URL)/api/v1/user_id/verify'
+
 create-game:
 	hyperfine -w 3 -r $(N) --export-json create_game.json 'curl -b wordle.cookie -X POST -d '"'"'{"answer": "hello"}'"'"' $(URL)/api/v1/create'
 
@@ -42,4 +47,4 @@ frontend:
 	hyperfine -w 3 -r $(N) --export-json frontend.json 'curl -X GET $(URL)' 'curl -b wordle.cookie -X GET $(URL)'
 
 average: all
-	jq -s '[.[].results[].mean] | add / length' {user_id,create,manage_game,register,play,get_state,frontend}.json
+	jq -s '[.[].results[].mean] | add / length' {user_id,verify_user_id,create_game,manage_game,register,play,get_state,frontend}.json
